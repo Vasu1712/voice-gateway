@@ -22,22 +22,25 @@
         let processor;
         let inputStream;
 
+        let audioQueue = [];
+        let isPlaying = false;
+
         startBtn.onclick = async () => {
-            startBtn.disabled = true;
             status.innerText = "Connecting...";
-            
-            // 1. Initialize WebSocket
+            audioContext = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: 16000 });
+            await audioContext.resume();
+
             ws = new WebSocket(`ws://${location.host}/ws/voice`);
             ws.binaryType = 'arraybuffer';
 
             ws.onopen = () => {
                 status.innerText = "🟢 Online - Speak now!";
-                initAudio();
+                startBtn.disabled = true;
+                initMicrophone();
             };
 
             ws.onmessage = async (event) => {
-                // Play received audio (Bot response)
-                playAudio(event.data);
+                enqueueAudio(event.data);
             };
             
             ws.onclose = () => {
@@ -47,10 +50,7 @@
             };
         };
 
-        async function initAudio() {
-            audioContext = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: 16000 });
-            
-            // Microphone input
+        async function initMicrophone() {
             const stream = await navigator.mediaDevices.getUserMedia({ 
                 audio: { 
                     channelCount: 1, 
@@ -60,49 +60,52 @@
                 } 
             });
             inputStream = stream;
-
             const source = audioContext.createMediaStreamSource(stream);
-            // ScriptProcessor is deprecated but easiest for a single-file demo. 
-            // Buffer size 4096 = ~0.25s latency
             processor = audioContext.createScriptProcessor(4096, 1, 1);
 
             processor.onaudioprocess = (e) => {
-                const inputData = e.inputBuffer.getChannelData(0);
-                // Downsample or send as is. We send float32 directly.
                 if (ws && ws.readyState === WebSocket.OPEN) {
-                    ws.send(inputData);
+                    // Send microphone data to server
+                    ws.send(e.inputBuffer.getChannelData(0));
                 }
             };
 
             source.connect(processor);
-            processor.connect(audioContext.destination); // Needed for Chrome to activate processor
+            processor.connect(audioContext.destination);
         }
 
-        function playAudio(arrayBuffer) {
-            ws.onmessage = (event) => {
-            if (!(event.data instanceof ArrayBuffer)) return;
+        function enqueueAudio(arrayBuffer) {
+            audioQueue.push(arrayBuffer);
+            if (!isPlaying) {
+                playNextChunk();
+            }
+        }
 
-            const float32 = new Float32Array(event.data);
+        function playNextChunk() {
+            if (audioQueue.length === 0) {
+                isPlaying = false;
+                return;
+            }
 
-            const buffer = audioContext.createBuffer(
-                1,
-                float32.length,
-                16000
-            );
+            isPlaying = true;
+            const audioData = audioQueue.shift();
 
-            buffer.copyToChannel(float32, 0);
-
-            const source = audioContext.createBufferSource();
-            source.buffer = buffer;
-            source.connect(audioContext.destination);
-            source.start();
-            };
+            audioContext.decodeAudioData(audioData, (buffer) => {
+                const source = audioContext.createBufferSource();
+                source.buffer = buffer;
+                source.connect(audioContext.destination);
+                
+                source.onended = () => {
+                    playNextChunk();
+                };
+                
+                source.start(0);
+            }, (e) => console.error("Error decoding audio:", e));
         }
 
         function stopAudio() {
             if (processor) processor.disconnect();
             if (inputStream) inputStream.getTracks().forEach(track => track.stop());
-            if (audioContext) audioContext.close();
         }
     </script>
 </body>

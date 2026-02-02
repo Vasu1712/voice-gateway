@@ -8,22 +8,10 @@ class TTSService:
     def __init__(self):
         pass
 
-    CHUNK_SIZE = 320  # 20ms @ 16kHz
-
-    async def stream_tts(text_stream, ws, interrupt_event):
-        for text_chunk in text_stream:
-            if interrupt_event.is_set():
-                break
-
-            audio = tts_model.generate(text_chunk)
-            audio = audio.astype("float32")
-
-            for i in range(0, len(audio), CHUNK_SIZE):
-                if interrupt_event.is_set():
-                    return
-
-                chunk = audio[i:i+CHUNK_SIZE]
-                await ws.send_bytes(chunk.tobytes())
+    async def generate_bytes(self, text):
+        """Generates WAV audio bytes from text."""
+        loop = asyncio.get_running_loop()
+        return await loop.run_in_executor(None, self._generate_sync, text)
 
     def _generate_sync(self, text):
         engine = pyttsx3.init()

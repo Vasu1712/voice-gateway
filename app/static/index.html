@@ -24,6 +24,7 @@
 
         let audioQueue = [];
         let isPlaying = false;
+        let currentSource = null;           // ← needed for instant stop
 
         startBtn.onclick = async () => {
             status.innerText = "Connecting...";
@@ -39,10 +40,22 @@
                 initMicrophone();
             };
 
-            ws.onmessage = async (event) => {
-                enqueueAudio(event.data);
+            ws.onmessage = (event) => {
+                if (typeof event.data === 'string') {
+                    // JSON control message (interrupt)
+                    try {
+                        const msg = JSON.parse(event.data);
+                        if (msg.type === 'interrupt') {
+                            console.log('🛑 Interrupt received from server');
+                            stopPlayback();
+                        }
+                    } catch (e) {}
+                } else {
+                    // Binary audio chunk
+                    enqueueAudio(event.data);
+                }
             };
-            
+
             ws.onclose = () => {
                 status.innerText = "🔴 Disconnected";
                 startBtn.disabled = false;
@@ -51,13 +64,13 @@
         };
 
         async function initMicrophone() {
-            const stream = await navigator.mediaDevices.getUserMedia({ 
-                audio: { 
-                    channelCount: 1, 
+            const stream = await navigator.mediaDevices.getUserMedia({
+                audio: {
+                    channelCount: 1,
                     sampleRate: 16000,
                     echoCancellation: true,
                     noiseSuppression: true
-                } 
+                }
             });
             inputStream = stream;
             const source = audioContext.createMediaStreamSource(stream);
@@ -65,20 +78,18 @@
 
             processor.onaudioprocess = (e) => {
                 if (ws && ws.readyState === WebSocket.OPEN) {
-                    // Send microphone data to server
                     ws.send(e.inputBuffer.getChannelData(0));
                 }
             };
 
             source.connect(processor);
-            processor.connect(audioContext.destination);
+            // processor.connect(audioContext.destination); // ← removed (no local echo)
+            processor.connect(audioContext.destination); // keep this line if you want to hear yourself
         }
 
         function enqueueAudio(arrayBuffer) {
             audioQueue.push(arrayBuffer);
-            if (!isPlaying) {
-                playNextChunk();
-            }
+            if (!isPlaying) playNextChunk();
         }
 
         function playNextChunk() {
@@ -94,18 +105,34 @@
                 const source = audioContext.createBufferSource();
                 source.buffer = buffer;
                 source.connect(audioContext.destination);
-                
+
+                currentSource = source;                     // save reference
+
                 source.onended = () => {
+                    currentSource = null;
                     playNextChunk();
                 };
-                
+
                 source.start(0);
-            }, (e) => console.error("Error decoding audio:", e));
+            }, (e) => {
+                console.error("Decode error", e);
+                playNextChunk();
+            });
+        }
+
+        function stopPlayback() {
+            audioQueue = [];                                // discard everything
+            if (currentSource) {
+                try { currentSource.stop(); } catch (e) {}
+                currentSource = null;
+            }
+            isPlaying = false;
         }
 
         function stopAudio() {
+            stopPlayback();
             if (processor) processor.disconnect();
-            if (inputStream) inputStream.getTracks().forEach(track => track.stop());
+            if (inputStream) inputStream.getTracks().forEach(t => t.stop());
         }
     </script>
 </body>

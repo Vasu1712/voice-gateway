@@ -4,9 +4,11 @@ import numpy as np
 import uvicorn
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.responses import HTMLResponse
+from fastapi.staticfiles import StaticFiles
 from app.services import vad_service, stt_service, llm_service, tts_service
 
 app = FastAPI(title="Full-Duplex Voice Agent")
+app.mount("/static", StaticFiles(directory="app/static"), name="static")
 
 @app.get("/", response_class=HTMLResponse)
 async def get_ui():

@@ -13,18 +13,17 @@
     <h1>🎙️ Barge-In Voice Agent</h1>
     <p id="status">Disconnected</p>
     <button id="startBtn">Start Conversation</button>
-
     <script>
         const startBtn = document.getElementById('startBtn');
         const status = document.getElementById('status');
         let ws;
         let audioContext;
-        let processor;
+        let workletNode;
         let inputStream;
 
         let audioQueue = [];
         let isPlaying = false;
-        let currentSource = null;           // ← needed for instant stop
+        let currentSource = null;
 
         startBtn.onclick = async () => {
             status.innerText = "Connecting...";
@@ -34,24 +33,22 @@
             ws = new WebSocket(`ws://${location.host}/ws/voice`);
             ws.binaryType = 'arraybuffer';
 
-            ws.onopen = () => {
+            ws.onopen = async () => {
                 status.innerText = "🟢 Online - Speak now!";
                 startBtn.disabled = true;
-                initMicrophone();
+                await initMicrophone();
             };
 
             ws.onmessage = (event) => {
                 if (typeof event.data === 'string') {
-                    // JSON control message (interrupt)
                     try {
                         const msg = JSON.parse(event.data);
-                        if (msg.type === 'interrupt') {
-                            console.log('🛑 Interrupt received from server');
+                        if (msg.type === "interrupt") {
+                            console.log('🛑 Interrupt received');
                             stopPlayback();
                         }
                     } catch (e) {}
                 } else {
-                    // Binary audio chunk
                     enqueueAudio(event.data);
                 }
             };
@@ -73,20 +70,24 @@
                 }
             });
             inputStream = stream;
-            const source = audioContext.createMediaStreamSource(stream);
-            processor = audioContext.createScriptProcessor(4096, 1, 1);
 
-            processor.onaudioprocess = (e) => {
+            // Load external worklet (clean production way)
+            await audioContext.audioWorklet.addModule('/static/voice-processor.js');
+
+            const source = audioContext.createMediaStreamSource(stream);
+            workletNode = new AudioWorkletNode(audioContext, 'voice-processor');
+
+            workletNode.port.onmessage = (e) => {
                 if (ws && ws.readyState === WebSocket.OPEN) {
-                    ws.send(e.inputBuffer.getChannelData(0));
+                    ws.send(e.data.buffer); // Float32Array → ArrayBuffer
                 }
             };
 
-            source.connect(processor);
-            // processor.connect(audioContext.destination); // ← removed (no local echo)
-            processor.connect(audioContext.destination); // keep this line if you want to hear yourself
+            source.connect(workletNode);
+            workletNode.connect(audioContext.destination); // remove this line if you don't want local echo
         }
 
+        // enqueueAudio, playNextChunk, stopPlayback, stopAudio functions remain exactly the same as before
         function enqueueAudio(arrayBuffer) {
             audioQueue.push(arrayBuffer);
             if (!isPlaying) playNextChunk();
@@ -97,7 +98,6 @@
                 isPlaying = false;
                 return;
             }
-
             isPlaying = true;
             const audioData = audioQueue.shift();
 
@@ -106,13 +106,11 @@
                 source.buffer = buffer;
                 source.connect(audioContext.destination);
 
-                currentSource = source;                     // save reference
-
+                currentSource = source;
                 source.onended = () => {
                     currentSource = null;
                     playNextChunk();
                 };
-
                 source.start(0);
             }, (e) => {
                 console.error("Decode error", e);
@@ -121,7 +119,7 @@
         }
 
         function stopPlayback() {
-            audioQueue = [];                                // discard everything
+            audioQueue = [];
             if (currentSource) {
                 try { currentSource.stop(); } catch (e) {}
                 currentSource = null;
@@ -131,7 +129,7 @@
 
         function stopAudio() {
             stopPlayback();
-            if (processor) processor.disconnect();
+            if (workletNode) workletNode.disconnect();
             if (inputStream) inputStream.getTracks().forEach(t => t.stop());
         }
     </script>

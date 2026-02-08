@@ -1,4 +1,13 @@
-#app/main.py
+# app/main.py
+import multiprocessing
+import warnings
+
+multiprocessing.set_start_method('fork', force=True)
+warnings.filterwarnings(
+    "ignore",
+    category=UserWarning,
+    message="resource_tracker: There appear to be"
+)
 import asyncio
 import numpy as np
 import uvicorn
@@ -19,32 +28,39 @@ async def get_ui():
 async def voice_websocket(websocket: WebSocket):
     await websocket.accept()
     
+    # Shared state
     state = {
         "is_speaking": False,
         "interrupt_signal": asyncio.Event(),
-        "audio_buffer": bytearray()
+        "audio_buffer": bytearray(),
+        "speech_counter": 0                     # ← for reliable barge-in
     }
 
     async def receive_loop():
+        """Continuously listen for user audio + detect barge-in"""
         try:
             while True:
                 data = await websocket.receive_bytes()
                 audio_chunk = np.frombuffer(data, dtype=np.float32)
 
-                if vad_service.is_speech(audio_chunk):
-                    # Barge-in detection
-                    if state["is_speaking"] and not state["interrupt_signal"].is_set():
+                if vad_service.is_speech(audio_chunk, threshold=0.005):
+                    state["speech_counter"] += 1
+
+                    # Barge-in: require ~5 consecutive speech chunks (~40 ms)
+                    if (state["is_speaking"] 
+                        and state["speech_counter"] > 5 
+                        and not state["interrupt_signal"].is_set()):
                         print("🛑 BARGE-IN DETECTED")
                         state["interrupt_signal"].set()
                         try:
                             await websocket.send_json({"type": "interrupt"})
                         except:
                             pass
-                    
+
                     state["audio_buffer"].extend(data)
                 else:
-                    # Silence → process utterance
-                    if len(state["audio_buffer"]) > 32000:  # ~0.5 s
+                    state["speech_counter"] = 0
+                    if len(state["audio_buffer"]) > 32000:  # ~0.5 s silence → process
                         audio_to_process = np.frombuffer(state["audio_buffer"], dtype=np.float32)
                         state["audio_buffer"] = bytearray()
                         asyncio.create_task(process_and_respond(audio_to_process))
@@ -65,6 +81,7 @@ async def voice_websocket(websocket: WebSocket):
         print(f"User: {transcript}")
         state["is_speaking"] = True
         state["interrupt_signal"].clear()
+        state["speech_counter"] = 0
 
         llm_generator = llm_service.generate_stream(transcript)
         sentence_buffer = ""
@@ -75,28 +92,34 @@ async def voice_websocket(websocket: WebSocket):
 
             sentence_buffer += text_chunk
 
-            # Send a phrase as soon as we have punctuation or ~120 chars
-            if any(p in text_chunk for p in ".!?") or len(sentence_buffer) > 120:
+            if any(p in text_chunk for p in ".!?") or len(sentence_buffer) > 50:
                 phrase = sentence_buffer.strip()
                 if phrase:
-                    audio_bytes = await tts_service.generate_bytes(phrase)
-                    if audio_bytes:
+                    async for pcm_chunk in tts_service.generate_stream(phrase):
+                        if state["interrupt_signal"].is_set():
+                            break
                         try:
-                            await websocket.send_bytes(audio_bytes)
+                            await websocket.send_bytes(pcm_chunk)
                         except:
                             break
                 sentence_buffer = ""
 
         # Flush last piece
         if sentence_buffer.strip() and not state["interrupt_signal"].is_set():
-            audio_bytes = await tts_service.generate_bytes(sentence_buffer.strip())
-            if audio_bytes:
-                await websocket.send_bytes(audio_bytes)
+            async for pcm_chunk in tts_service.generate_stream(sentence_buffer.strip()):
+                if state["interrupt_signal"].is_set():
+                    break
+                try:
+                    await websocket.send_bytes(pcm_chunk)
+                except:
+                    break
 
         state["is_speaking"] = False
         print("✅ Turn finished")
 
+    # ←←← THIS WAS MISSING ←←←
     await receive_loop()
+
 
 if __name__ == "__main__":
     uvicorn.run(app, host="0.0.0.0", port=8000)

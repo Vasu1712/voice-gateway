@@ -14,7 +14,7 @@ import uvicorn
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
-from app.services import vad_service, stt_service, llm_service, tts_service
+from app.services import vad_service, stt_service, llm_service, tts_service, graph_rag_service
 
 app = FastAPI(title="Full-Duplex Voice Agent")
 app.mount("/static", StaticFiles(directory="app/static"), name="static")
@@ -27,13 +27,12 @@ async def get_ui():
 @app.websocket("/ws/voice")
 async def voice_websocket(websocket: WebSocket):
     await websocket.accept()
-    
-    # Shared state
+
     state = {
         "is_speaking": False,
         "interrupt_signal": asyncio.Event(),
         "audio_buffer": bytearray(),
-        "speech_counter": 0                     # ← for reliable barge-in
+        "speech_counter": 0
     }
 
     async def receive_loop():
@@ -60,7 +59,7 @@ async def voice_websocket(websocket: WebSocket):
                     state["audio_buffer"].extend(data)
                 else:
                     state["speech_counter"] = 0
-                    if len(state["audio_buffer"]) > 32000:  # ~0.5 s silence → process
+                    if len(state["audio_buffer"]) > 32000:
                         audio_to_process = np.frombuffer(state["audio_buffer"], dtype=np.float32)
                         state["audio_buffer"] = bytearray()
                         asyncio.create_task(process_and_respond(audio_to_process))
@@ -83,7 +82,7 @@ async def voice_websocket(websocket: WebSocket):
         state["interrupt_signal"].clear()
         state["speech_counter"] = 0
 
-        llm_generator = llm_service.generate_stream(transcript)
+        llm_generator = graph_rag_service.generate_stream(transcript)
         sentence_buffer = ""
 
         async for text_chunk in llm_generator:
@@ -117,7 +116,6 @@ async def voice_websocket(websocket: WebSocket):
         state["is_speaking"] = False
         print("✅ Turn finished")
 
-    # ←←← THIS WAS MISSING ←←←
     await receive_loop()
 
 

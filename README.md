@@ -11,10 +11,10 @@ Built entirely with local, privacy-first models (Llama 3.2, Whisper, Piper), Oni
 The system uses a WebSocket-based full-duplex pipeline. It listens for user audio, detects speech activity (VAD), transcribes it (STT), queries a Knowledge Graph (GraphRAG), generates a response (LLM), and synthesizes speech (TTS)—all in real time.
 
 ### High Level Overview
-
+<img src="assets/onix_hld.svg" alt="Onix HLD"/>
 
 ### Mermaid Diagram
-
+<img src="assets/onix_mermaid.svg" alt="Onix Mermaid"/>
 
 ---
 

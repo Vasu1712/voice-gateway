@@ -10,6 +10,12 @@ Built entirely with local, privacy-first models (Llama 3.2, Whisper, Piper), Oni
 
 The system uses a WebSocket-based full-duplex pipeline. It listens for user audio, detects speech activity (VAD), transcribes it (STT), queries a Knowledge Graph (GraphRAG), generates a response (LLM), and synthesizes speech (TTS)—all in real time.
 
+### High Level Overview
+
+
+### Mermaid Diagram
+
+
 ---
 
 ## Key Features
@@ -19,11 +25,6 @@ Talk and listen simultaneously. The agent handles interruptions (barge-ins) natu
 
 ### GraphRAG
 Uses LangGraph and Neo4j to ground answers in structured data. The agent dynamically writes Cypher queries to fetch relevant information.
-
-### Privacy-First
-- **LLM**: Runs locally via Ollama (Llama 3.2)
-- **STT**: Runs locally via Faster-Whisper
-- **TTS**: Runs locally via Piper
 
 ### Low Latency
 Optimized for streaming. Text is synthesized into audio token-by-token (streaming TTS) rather than waiting for full sentences.
@@ -96,41 +97,43 @@ cd onix
 
 ### Create a Virtual Environment (python 3.11 is recommended)
 
+```bash
 python3.11 -m venv .venv
 source .venv/bin/activate
-
+```
 ### Install Dependencies
 
 Important:
 To avoid conflicts between numba (used by Whisper) and langchain-neo4j, install NumPy with a constraint.
 
+```bash
 pip install "numpy>=1.22,<2.4"
 pip install -r requirements.txt
-
-
-If requirements.txt is missing, install manually:
-
-pip install fastapi uvicorn[standard] faster-whisper ollama \
-            langchain-ollama langchain-neo4j langgraph \
-            pydantic-settings
+```
 
 Configure Environment Variables
 
 Create a .env file in the project root:
 
+```bash
 DB_URL=bolt://localhost:7687
 DB_USERNAME=neo4j
 DB_PASSWORD=password
+```
 
 ## Usage
 
 ### Start the Server
+```bash
 python3 -m uvicorn app.main:app --reload
+```
 
 ### Access the UI
 
 Open your browser and navigate to:
 
+```bash
 http://localhost:8000
+```
 
 
